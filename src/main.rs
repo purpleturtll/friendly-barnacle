@@ -12,7 +12,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Err("Invalid number of arguments".into());
     }
 
-    let mut package = match Package::from_url(&args[1]) {
+    let mut package = match Package::from_url(&args[1]).await {
         Ok(package) => package,
         Err(e) => {
             println!("Error: {}", e);

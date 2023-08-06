@@ -20,7 +20,7 @@
                 }
             },
             "args": [
-                "github.com/purpleturtll/ort-test-1@main"
+                "github.com/labstack/echo@master"
             ],
             "cwd": "${workspaceFolder}"
         },

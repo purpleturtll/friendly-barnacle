@@ -1,0 +1,5 @@
+GET golang.org/x/sys HTTP/1.1
+
+###
+
+GET gopkg.in/yaml.v3 HTTP/1.1

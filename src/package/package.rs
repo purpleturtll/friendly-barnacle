@@ -1,7 +1,8 @@
 use log::debug;
+use reqwest::redirect::Policy;
 use std::{
     error::Error,
-    fmt::{self, Formatter},
+    fmt::{self, format, Formatter},
 };
 
 pub struct Package {
@@ -9,24 +10,26 @@ pub struct Package {
     owner: String,
     version: String,
     license: String,
+    source: String,
     dependencies: Vec<Package>,
 }
 
 // public methods
 impl Package {
-    pub fn new(name: String, owner: String, version: String) -> Package {
+    pub fn new(name: String, owner: String, version: String, source: String) -> Package {
         Package {
             name,
             owner,
             version,
+            source: source,
             license: String::new(),
             dependencies: Vec::new(),
         }
     }
 
-    pub fn from_url(url: &str) -> Result<Package, Box<dyn Error>> {
-        let (name, owner, version) = Package::get_identifiers(url).unwrap();
-        Ok(Package::new(name, owner, version))
+    pub async fn from_url(url: &str) -> Result<Package, Box<dyn Error>> {
+        let (name, owner, version, source) = Package::get_identifiers(url).await?;
+        Ok(Package::new(name, owner, version, source))
     }
 
     pub async fn get_license(&mut self) -> Result<(), Box<dyn Error>> {
@@ -71,7 +74,7 @@ impl Package {
                 debug!("Tokens: {:?}", tokens);
                 let url = tokens.get(1).unwrap();
                 let url = format!("{}@{}", url, tokens.get(2).unwrap());
-                let package = Package::from_url(url.as_str())?;
+                let package = Package::from_url(url.as_str()).await?;
                 self.dependencies.push(package);
             }
             i += 1;
@@ -88,7 +91,7 @@ impl Package {
                     debug!("Tokens: {:?}", tokens);
                     let url = tokens.get(0).unwrap();
                     let url = format!("{}@{}", url, tokens.get(1).unwrap());
-                    let package = Package::from_url(url.as_str())?;
+                    let package = Package::from_url(url.as_str()).await?;
                     self.dependencies.push(package);
                     i += 1;
                 }
@@ -119,15 +122,54 @@ impl Package {
     }
 
     // Get name, owner, version from url
-    fn get_identifiers(url: &str) -> Result<(String, String, String), Box<dyn Error>> {
+    async fn get_identifiers(
+        url: &str,
+    ) -> Result<(String, String, String, String), Box<dyn Error>> {
         let platform = Package::platform(url)?;
         match platform {
             "github.com" => Package::get_github_identifiers(url),
+            "golang.org" => Package::get_golang_identifiers(url).await,
             _ => Err(format!("Invalid platform: {}", platform).into()),
         }
     }
 
-    fn get_github_identifiers(url: &str) -> Result<(String, String, String), Box<dyn Error>> {
+    // To get repo we need to make request GET golang.org/x/sys, and extract actual repo from <meta name=go-import ...>
+    async fn get_golang_identifiers(
+        url: &str,
+    ) -> Result<(String, String, String, String), Box<dyn Error>> {
+        debug!("Getting identifiers for {}", url);
+        // Split by url@version
+        let tokens: Vec<&str> = url.split("@").collect();
+        let url = tokens.get(0).unwrap();
+        let version = tokens.get(1).unwrap();
+        let client = reqwest::Client::builder()
+            .redirect(Policy::none())
+            .build()?;
+        let response = client.get(format!("https://{}", url)).send().await?;
+        let content = response.text().await?;
+        debug!("Content: {}", content);
+        let lines: Vec<&str> = content.split("\n").collect();
+        let mut repo = String::new();
+        for line in lines {
+            if line.contains("meta name=\"go-import\"") {
+                let tokens: Vec<&str> = line.split(" ").collect();
+                debug!("Tokens: {:?}", tokens);
+                repo = tokens.get(tokens.len() - 1).unwrap().to_string();
+                repo = repo.replace("\"", "");
+                repo = repo.replace(">", "");
+                break;
+            }
+        }
+        let tokens: Vec<&str> = repo.split("/").collect();
+        debug!("Tokens: {:?}", tokens);
+        let owner = "".to_string();
+        let name = tokens.get(1).unwrap().to_string();
+        Ok((name, owner, version.to_string(), repo))
+    }
+
+    fn get_github_identifiers(
+        url: &str,
+    ) -> Result<(String, String, String, String), Box<dyn Error>> {
         let tokens: Vec<&str> = url.split("/").collect();
 
         if tokens.len() != 3 {
@@ -145,6 +187,7 @@ impl Package {
             String::from(repo_name),
             String::from(owner),
             String::from(repo_version),
+            String::from(format!("github.com/{}/{}", owner, repo_name)),
         ))
     }
 
